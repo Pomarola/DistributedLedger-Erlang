@@ -158,7 +158,7 @@ actionQueueHandler(Queue, ANumber, PNumber, TO) ->
         {nodedown, Node} ->
             FilteredQueue = lists:filter(fun (X) -> 
                 {_, _, {_, XNode}, State} = X,
-                not({Node, prop} == {XNode, State})
+                {Node, prop} /= {XNode, State}
                 end ,Queue),
             actionQueueHandler(FilteredQueue, ANumber, PNumber, 0);
 
