@@ -61,6 +61,7 @@ serverRequestsLoop() ->
     receive
         {propose, Pid, Id, Type} ->
             {_, Node} = Id,
+            ?Dbg("Node: ~p ~n" ,[Node]),
             nodeMonitor ! {startMonitor, Node},
             spawn(?MODULE, sendPropose, [Pid, Type, Id]), 
             serverRequestsLoop();
@@ -77,14 +78,20 @@ serverRequestsLoop() ->
 
 nodeMonitorLoop() ->
     receive
-        {startMonitor,Node} ->
-            monitor_node(Node, true);
+        {startMonitor, Node} ->
+            monitor_node(Node, true),
+            nodeMonitorLoop();
         {endMonitor, Node} ->
-            monitor_node(Node, false);
+            monitor_node(Node, false),
+            nodeMonitorLoop();
         {nodedown, Node} ->
-            actionQueue ! {nodedown, Node};
+            actionQueue ! {nodedown, Node},
+            nodeMonitorLoop();
         fin -> 
-            ?Dbg("Node Monitor Closed~n")
+            ?Dbg("Node Monitor Closed~n");
+        _ -> 
+            ?Dbg("Node Monitor Recv cualq~n"),
+            nodeMonitorLoop()
     end.
 
 sendPropose(Pid, Type, Id) ->
