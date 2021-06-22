@@ -2,7 +2,7 @@
 %-include("struct.hrl").
 -export([start/0,stop/0]).
 -export([clientRequestsLoop/0, serverRequestsLoop/0]).
--export([sendPropose/3]).
+-export([sendPropose/3, nodeMonitorLoop/0]).
 -export([atomicBroadcast/2]).
 -export([appendPendingLoop/1, getPendingLoop/1, ledgerHandler/1, actionQueueHandler/4]).
 
@@ -13,6 +13,7 @@
 start() ->
     register(clientRequest,spawn(?MODULE, clientRequestsLoop,[])),
     register(serverRequest,spawn(?MODULE, serverRequestsLoop,[])),
+    register(nodeMonitor,spawn(?MODULE, nodeMonitorLoop,[])),
 
     register(appendPending, spawn(?MODULE, appendPendingLoop,[maps:new()])),
     register(getPending, spawn(?MODULE, getPendingLoop,[sets:new()])),
@@ -22,6 +23,7 @@ start() ->
 stop() ->
     clientRequest ! fin,
     serverRequest ! fin,
+    nodeMonitor ! fin,
     appendPending ! fin,
     getPending ! fin,
     ledger ! fin,
@@ -29,6 +31,7 @@ stop() ->
 
     unregister(clientRequest),
     unregister(serverRequest),
+    unregister(nodeMonitor),
     unregister(appendPending),
     unregister(getPending),
     unregister(ledger),
@@ -57,15 +60,31 @@ clientRequestsLoop() ->
 serverRequestsLoop() ->
     receive
         {propose, Pid, Id, Type} ->
+            {_, Node} = Id,
+            nodeMonitor ! {startMonitor, Node},
             spawn(?MODULE, sendPropose, [Pid, Type, Id]), 
             serverRequestsLoop();
 
         {agreed, Id, Number} ->
+            {_, Node} = Id,
+            nodeMonitor ! {endMonitor, Node},
             actionQueue ! {agreed, Id, Number},
             serverRequestsLoop();
 
         fin ->
             ?Dbg("Server Requests Closed~n")
+    end.
+
+nodeMonitorLoop() ->
+    receive
+        {startMonitor,Node} ->
+            monitor_node(Node, true);
+        {endMonitor, Node} ->
+            monitor_node(Node, false);
+        {nodedown, Node} ->
+            actionQueue ! {nodedown, Node};
+        fin -> 
+            ?Dbg("Node Monitor Closed~n")
     end.
 
 sendPropose(Pid, Type, Id) ->
@@ -128,6 +147,13 @@ actionQueueHandler(Queue, ANumber, PNumber, TO) ->
             {Type, _, _, _} = lists:keyfind(Id, 2, Queue),
             AgreedAction = {Type, Id, {AgreedNumber, Node}, agreed},
             actionQueueHandler(insertSorted(lists:keydelete(Id, 2, Queue), AgreedAction), AgreedNumber, PNumber, 0);
+
+        {nodedown, Node} ->
+            FilteredQueue = lists:filter(fun (X) -> 
+                {_, _, {_, XNode}, State} = X,
+                not({Node, prop} == {XNode, State})
+                end ,Queue),
+            actionQueueHandler(FilteredQueue, ANumber, PNumber, 0);
 
         fin ->
             ?Dbg("Queue Closed~n")
